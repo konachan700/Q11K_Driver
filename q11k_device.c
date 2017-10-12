@@ -26,98 +26,6 @@
 
 #define DEBUG
 
-enum {
-	PENPARTNER = 0,
-	GRAPHIRE,
-	GRAPHIRE_BT,
-	WACOM_G4,
-	PTU,
-	PL,
-	DTU,
-	DTUS,
-	DTUSX,
-	INTUOS,
-	INTUOS3S,
-	INTUOS3,
-	INTUOS3L,
-	INTUOS4S,
-	INTUOS4,
-	INTUOS4WL,
-	INTUOS4L,
-	INTUOS5S,
-	INTUOS5,
-	INTUOS5L,
-	INTUOSPS,
-	INTUOSPM,
-	INTUOSPL,
-	INTUOSP2_BT,
-	WACOM_21UX2,
-	WACOM_22HD,
-	DTK,
-	WACOM_24HD,
-	WACOM_27QHD,
-	CINTIQ_HYBRID,
-	CINTIQ_COMPANION_2,
-	CINTIQ,
-	WACOM_BEE,
-	WACOM_13HD,
-	WACOM_MO,
-	BAMBOO_PEN,
-	INTUOSHT,
-	INTUOSHT2,
-	BAMBOO_TOUCH,
-	BAMBOO_PT,
-	WACOM_24HDT,
-	WACOM_27QHDT,
-	BAMBOO_PAD,
-	WIRELESS,
-	REMOTE,
-	TABLETPC,   /* add new TPC below */
-	TABLETPCE,
-	TABLETPC2FG,
-	MTSCREEN,
-	MTTPC,
-	MTTPC_B,
-	HID_GENERIC,
-	MAX_TYPE
-};
-
-struct q11k_features {
-	const char *name;
-	int x_max;
-	int y_max;
-	int pressure_max;
-	int distance_max;
-	int type;
-	int x_resolution;
-	int y_resolution;
-	int numbered_buttons;
-	int offset_left;
-	int offset_right;
-	int offset_top;
-	int offset_bottom;
-	int device_type;
-	int x_phy;
-	int y_phy;
-	unsigned unit;
-	int unitExpo;
-	int x_fuzz;
-	int y_fuzz;
-	int pressure_fuzz;
-	int distance_fuzz;
-	int tilt_fuzz;
-	unsigned quirks;
-	unsigned touch_max;
-	int oVid;
-	int oPid;
-	int pktlen;
-	bool check_for_hid_type;
-	int hid_type;
-};
-
-static const struct q11k_features q11k_features =
-	{ DEVNAME, .type=BAMBOO_PEN, .oVid=0x172f, .oPid=0x0024, .x_max=32640, .y_max=32640, .pressure_max=8192, .x_resolution=300, .y_resolution=300, .device_type=0x0004 };
-
 #define Q11K_RDESC_ORIG_SIZE1 83
 static __u8 q11k_rdesc_fixed1[] = {
     0x05, 0x0D,        // Usage Page (Digitizer)
@@ -412,7 +320,7 @@ void q11k_remove(struct hid_device *dev) {
 }
 
 static const struct hid_device_id q11k_device[] = {
-    { HID_USB_DEVICE(USB_VENDOR_ID_HUION, USB_DEVICE_ID_HUION_TABLET), .driver_data = (kernel_ulong_t) &q11k_features },
+    { HID_USB_DEVICE(USB_VENDOR_ID_HUION, USB_DEVICE_ID_HUION_TABLET) },
     {}
 };
 
