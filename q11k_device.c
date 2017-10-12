@@ -84,19 +84,20 @@ static __u8 q11k_rdesc_fixed0[] = {
     0xC0,              // End Collection
 };
 
-#define Q11K_KEYMAP_SIZE 14
+#define Q11K_KEYMAP_SIZE 11
 static unsigned short def_keymap[Q11K_KEYMAP_SIZE] = {
-    KEY_F14, KEY_F15, KEY_F16, KEY_F17,  
-    KEY_F18, KEY_F19, KEY_F20, KEY_F21,  
-    KEY_F22, KEY_F23, BTN_STYLUS, BTN_STYLUS2, BTN_TOOL_PEN, BTN_TOOL_RUBBER
+    KEY_0, KEY_1, KEY_2, KEY_3,  
+    KEY_4, KEY_5, KEY_6, KEY_7,  
+    KEY_8, KEY_9, KEY_RIGHTCTRL
 };
 
-struct input_dev *idev = NULL;
-int pressure_last = 0, stylus_pressed = 0;
-
-void q11k_0_hiddev_report_event(struct hid_device *hdev, struct hid_report *hrep) {
-    printk("q11k q11k_0_hiddev_report_event");
-}
+struct input_dev 
+    *idev               = NULL, 
+    *idev_keyboard      = NULL;
+    
+int 
+    pressure_last       = 0, 
+    stylus_pressed      = 0;
 
 static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
     int rc, i;
@@ -140,37 +141,22 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
             input_set_drvdata(idev, hdev);
             
             idev->name = "Huion Q11K Tablet";
-            //idev->phys = hdev->phys;
-            //idev->uniq = hdev->uniq;
-            idev->id.bustype = BUS_USB; //hdev->bus;
-            idev->id.vendor  = 0x56a; //hdev->vendor;
-            //idev->id.product = hdev->product;
-            idev->id.version = 0;//hdev->version;
+            idev->id.bustype = BUS_USB;
+            idev->id.vendor  = 0x56a;
+            idev->id.version = 0;
             idev->dev.parent = &hdev->dev;
-            idev->keycode = def_keymap;
-            idev->keycodemax  = Q11K_KEYMAP_SIZE;
-            idev->keycodesize = sizeof(def_keymap[0]);
             
-            //set_bit(EV_REP, idev->evbit);
+            set_bit(EV_REP, idev->evbit);
             set_bit(EV_KEY, idev->evbit);
             set_bit(EV_ABS, idev->evbit);
             set_bit(BTN_TOOL_PEN, idev->keybit); 
-            set_bit(BTN_TOOL_RUBBER, idev->keybit);
             set_bit(BTN_STYLUS, idev->keybit);
             set_bit(BTN_STYLUS2, idev->keybit);
             
             input_set_abs_params(idev, ABS_X, 1, 32640, 0, 0);
             input_set_abs_params(idev, ABS_Y, 1, 32640, 0, 0);
             input_set_abs_params(idev, ABS_PRESSURE, 1, 8192, 0, 0);
-            
-            for (i=0; i<Q11K_KEYMAP_SIZE; i++) {
-                input_set_capability(idev, EV_KEY, def_keymap[i]);
-                set_bit(def_keymap[i], idev->keybit);
-            }
-            
-            input_set_capability(idev, EV_MSC, MSC_SCAN);
-            /*input_set_capability(idev, EV_SW, SW_DOCK);
-            input_set_capability(idev, EV_SW, SW_TABLET_MODE);*/
+
             
             rc = input_register_device(idev);
             if (rc) {
@@ -178,7 +164,37 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
                 input_free_device(idev);
                 return rc;
             }
-        }
+        } else if (if_number == 0) {
+            idev_keyboard = input_allocate_device();
+            if (idev_keyboard == NULL) {
+                hid_err(hdev, "failed to allocate input device [kb]\n");
+                return -ENOMEM;
+            }
+            
+            idev_keyboard->name = "Huion Q11K Keyboard";
+            idev_keyboard->id.bustype = BUS_USB;
+            idev_keyboard->id.vendor  = 0x04b4;
+            idev_keyboard->id.version = 0;
+            idev_keyboard->keycode = def_keymap;
+            idev_keyboard->keycodemax  = Q11K_KEYMAP_SIZE;
+            idev_keyboard->keycodesize = sizeof(def_keymap[0]);
+            
+            set_bit(EV_REP, idev_keyboard->evbit);
+            set_bit(EV_KEY, idev_keyboard->evbit);
+            
+            input_set_capability(idev_keyboard, EV_MSC, MSC_SCAN);
+            
+            for (i=0; i<Q11K_KEYMAP_SIZE; i++) {
+                input_set_capability(idev_keyboard, EV_KEY, def_keymap[i]);
+            }
+            
+            rc = input_register_device(idev_keyboard);
+            if (rc) {
+                hid_err(hdev, "error registering the input device [kb]\n");
+                input_free_device(idev_keyboard);
+                return rc;
+            }
+        } 
         
         printk("q11k device ok");
     } else {
@@ -214,12 +230,25 @@ static __u8 *q11k_report_fixup(struct hid_device *hdev, __u8 *rdesc, unsigned in
     return rdesc;
 }
 
+static void __q11k_rkey_press(unsigned short key, int b_key_raw, int s) {
+    input_report_key(idev_keyboard, KEY_RIGHTCTRL, s);
+    input_sync(idev_keyboard);
+    input_report_key(idev_keyboard, key, s);
+    input_sync(idev_keyboard);
+}
+
 static void q11k_rkey_press(unsigned short key, int b_key_raw) {
-    input_event(idev, EV_MSC, MSC_SCAN, b_key_raw);
-    input_report_key(idev, key, 1);
-    input_sync(idev);
-    input_report_key(idev, key, 0);
-    input_sync(idev);
+/*    input_event(idev_keyboard, EV_MSC, MSC_SCAN, b_key_raw);
+    input_report_key(idev_keyboard, KEY_RIGHTCTRL, 1);
+    input_sync(idev_keyboard);
+    input_report_key(idev_keyboard, key, 1);
+    input_sync(idev_keyboard);
+    input_report_key(idev_keyboard, key, 0);
+    input_sync(idev_keyboard);
+    input_report_key(idev_keyboard, KEY_RIGHTCTRL, 0);
+    input_sync(idev_keyboard);*/
+    __q11k_rkey_press(key, b_key_raw, 1);
+    __q11k_rkey_press(key, b_key_raw, 0);
 }
 
 static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size) {
@@ -243,23 +272,29 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
         
         if ((data[1] == 0xc2) || (data[1] == 0xc4)) {
             if (stylus_pressed == 0) {
-                if (data[1] == 0xc2) input_report_key(idev, BTN_STYLUS, 1);
-                if (data[1] == 0xc4) input_report_key(idev, BTN_STYLUS2, 1);
+                if (data[1] == 0xc2) __q11k_rkey_press(KEY_8, data[4], 1);
+                if (data[1] == 0xc4) __q11k_rkey_press(KEY_9, data[4], 1);
             }
             stylus_pressed = 1;
         } else {
             if (stylus_pressed == 1) {
-                if (data[1] == 0xc2) input_report_key(idev, BTN_STYLUS, 0);
-                if (data[1] == 0xc4) input_report_key(idev, BTN_STYLUS2, 0);
+                __q11k_rkey_press(KEY_8, data[4], 0);
+                __q11k_rkey_press(KEY_9, data[4], 0);
             }
             stylus_pressed = 0;
         }
         
         
-        input_report_key(idev, BTN_TOOL_PEN, pressure);
+        if (data[1] == 0xc0) {
+            input_report_key(idev, BTN_TOOL_PEN, 0);
+            input_report_abs(idev, ABS_PRESSURE, 0);
+        } else {
+            input_report_key(idev, BTN_TOOL_PEN, 1);
+            input_report_abs(idev, ABS_PRESSURE, pressure);
+        }
+        
         input_report_abs(idev, ABS_X, x_pos);
         input_report_abs(idev, ABS_Y, y_pos);
-        input_report_abs(idev, ABS_PRESSURE, pressure);
         
         input_sync(idev);
     }
@@ -271,28 +306,28 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
                 // nothing to do...
                 break;
             case 0x01:
-                q11k_rkey_press(KEY_F14, key_raw);
+                q11k_rkey_press(KEY_0, key_raw);
                 break;
             case 0x02:
-                q11k_rkey_press(KEY_F15, key_raw);
+                q11k_rkey_press(KEY_1, key_raw);
                 break;
             case 0x04:
-                q11k_rkey_press(KEY_F16, key_raw);
+                q11k_rkey_press(KEY_2, key_raw);
                 break;
             case 0x08:
-                q11k_rkey_press(KEY_F17, key_raw);
+                q11k_rkey_press(KEY_3, key_raw);
                 break;
             case 0x10:
-                q11k_rkey_press(KEY_F18, key_raw);
+                q11k_rkey_press(KEY_4, key_raw);
                 break;
             case 0x20:
-                q11k_rkey_press(KEY_F19, key_raw);
+                q11k_rkey_press(KEY_5, key_raw);
                 break;
             case 0x40:
-                q11k_rkey_press(KEY_F20, key_raw);
+                q11k_rkey_press(KEY_6, key_raw);
                 break;
             case 0x80:
-                q11k_rkey_press(KEY_F21, key_raw);
+                q11k_rkey_press(KEY_7, key_raw);
                 break;
             default:
                 printk("Unknown button code captured. Ignored.");
@@ -310,10 +345,17 @@ static int uclogic_resume(struct hid_device *hdev) {
 #endif
 
 void q11k_remove(struct hid_device *dev) {
-    if (idev != NULL) {
+    struct usb_interface *intf = to_usb_interface(dev->dev.parent);
+    if (intf->cur_altsetting->desc.bInterfaceNumber == 0) {
+                input_unregister_device(idev_keyboard);
+        input_free_device(idev_keyboard);
+        idev_keyboard = NULL;
+        printk("Q11K keyboard unregistered");
+    } else if (intf->cur_altsetting->desc.bInterfaceNumber == 1) {
         input_unregister_device(idev);
         input_free_device(idev);
         idev = NULL;
+        printk("Q11K tab unregistered");
     }
     hid_hw_close(dev);
     hid_hw_stop(dev);
