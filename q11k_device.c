@@ -84,11 +84,11 @@ static __u8 q11k_rdesc_fixed0[] = {
     0xC0,              // End Collection
 };
 
-#define Q11K_KEYMAP_SIZE 12
+#define Q11K_KEYMAP_SIZE 14
 static unsigned short def_keymap[Q11K_KEYMAP_SIZE] = {
     KEY_F14, KEY_F15, KEY_F16, KEY_F17,  
     KEY_F18, KEY_F19, KEY_F20, KEY_F21,  
-    KEY_F22, KEY_F23, BTN_STYLUS, BTN_STYLUS2
+    KEY_F22, KEY_F23, BTN_STYLUS, BTN_STYLUS2, BTN_TOOL_PEN, BTN_TOOL_RUBBER
 };
 
 struct input_dev *idev = NULL;
@@ -143,7 +143,7 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
             //idev->phys = hdev->phys;
             //idev->uniq = hdev->uniq;
             idev->id.bustype = BUS_USB; //hdev->bus;
-            idev->id.vendor  = 0x7777; //hdev->vendor;
+            idev->id.vendor  = 0x56a; //hdev->vendor;
             //idev->id.product = hdev->product;
             idev->id.version = 0;//hdev->version;
             idev->dev.parent = &hdev->dev;
@@ -159,19 +159,17 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
             set_bit(BTN_STYLUS, idev->keybit);
             set_bit(BTN_STYLUS2, idev->keybit);
             
-            input_set_abs_params(idev, ABS_X, 0, 32640, 0, 0);
-            input_set_abs_params(idev, ABS_Y, 0, 32640, 0, 0);
-            input_set_abs_params(idev, ABS_RX, 0, 500, 0, 0);
-            input_set_abs_params(idev, ABS_RY, 0, 500, 0, 0);
-            input_set_abs_params(idev, ABS_PRESSURE, 0, 8192, 0, 0);
+            input_set_abs_params(idev, ABS_X, 1, 32640, 0, 0);
+            input_set_abs_params(idev, ABS_Y, 1, 32640, 0, 0);
+            input_set_abs_params(idev, ABS_PRESSURE, 1, 8192, 0, 0);
             
             for (i=0; i<Q11K_KEYMAP_SIZE; i++) {
                 input_set_capability(idev, EV_KEY, def_keymap[i]);
                 set_bit(def_keymap[i], idev->keybit);
             }
             
-           /* input_set_capability(idev, EV_MSC, MSC_SCAN);
-            input_set_capability(idev, EV_SW, SW_DOCK);
+            input_set_capability(idev, EV_MSC, MSC_SCAN);
+            /*input_set_capability(idev, EV_SW, SW_DOCK);
             input_set_capability(idev, EV_SW, SW_TABLET_MODE);*/
             
             rc = input_register_device(idev);
@@ -239,7 +237,7 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
         
         pressure_last = pressure;
         
-        printk("sensors: x=%05d y=%05d pressure=%05d", x_pos, y_pos, pressure);
+        //printk("sensors: x=%05d y=%05d pressure=%05d", x_pos, y_pos, pressure);
         
         input_report_abs(idev, ABS_MISC, 0);
         
@@ -257,6 +255,8 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
             stylus_pressed = 0;
         }
         
+        
+        input_report_key(idev, BTN_TOOL_PEN, pressure);
         input_report_abs(idev, ABS_X, x_pos);
         input_report_abs(idev, ABS_Y, y_pos);
         input_report_abs(idev, ABS_PRESSURE, pressure);
@@ -319,8 +319,46 @@ void q11k_remove(struct hid_device *dev) {
     hid_hw_stop(dev);
 }
 
+struct wacom_features {
+	const char *name;
+	int x_max;
+	int y_max;
+	int pressure_max;
+	int distance_max;
+	int type;
+	int x_resolution;
+	int y_resolution;
+	int numbered_buttons;
+	int offset_left;
+	int offset_right;
+	int offset_top;
+	int offset_bottom;
+	int device_type;
+	int x_phy;
+	int y_phy;
+	unsigned unit;
+	int unitExpo;
+	int x_fuzz;
+	int y_fuzz;
+	int pressure_fuzz;
+	int distance_fuzz;
+	int tilt_fuzz;
+	unsigned quirks;
+	unsigned touch_max;
+	int oVid;
+	int oPid;
+	int pktlen;
+	bool check_for_hid_type;
+	int hid_type;
+};
+
+
+//32640
+static const struct wacom_features wacom_features =
+	{ "Wacom Penpartner", 32640, 32640, 8192, 0, 4, 40, 40 };
+
 static const struct hid_device_id q11k_device[] = {
-    { HID_USB_DEVICE(USB_VENDOR_ID_HUION, USB_DEVICE_ID_HUION_TABLET) },
+    { HID_USB_DEVICE(USB_VENDOR_ID_HUION, USB_DEVICE_ID_HUION_TABLET), .driver_data = (kernel_ulong_t)&wacom_features },
     {}
 };
 
