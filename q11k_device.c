@@ -238,15 +238,6 @@ static void __q11k_rkey_press(unsigned short key, int b_key_raw, int s) {
 }
 
 static void q11k_rkey_press(unsigned short key, int b_key_raw) {
-/*    input_event(idev_keyboard, EV_MSC, MSC_SCAN, b_key_raw);
-    input_report_key(idev_keyboard, KEY_RIGHTCTRL, 1);
-    input_sync(idev_keyboard);
-    input_report_key(idev_keyboard, key, 1);
-    input_sync(idev_keyboard);
-    input_report_key(idev_keyboard, key, 0);
-    input_sync(idev_keyboard);
-    input_report_key(idev_keyboard, KEY_RIGHTCTRL, 0);
-    input_sync(idev_keyboard);*/
     __q11k_rkey_press(key, b_key_raw, 1);
     __q11k_rkey_press(key, b_key_raw, 0);
 }
