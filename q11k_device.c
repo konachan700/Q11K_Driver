@@ -180,8 +180,8 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
             idev_keyboard->keycodesize = sizeof(def_keymap[0]);
             
             input_set_capability(idev_keyboard, EV_MSC, MSC_SCAN);
-            input_set_capability(idev_keyboard, EV_REL, MSC_SCAN);
-            input_set_capability(idev_keyboard, EV_REP, MSC_SCAN);
+            //input_set_capability(idev_keyboard, EV_REL, MSC_SCAN);
+            //input_set_capability(idev_keyboard, EV_REP, MSC_SCAN);
             
             for (i=0; i<Q11K_KEYMAP_SIZE; i++) {
                 input_set_capability(idev_keyboard, EV_KEY, def_keymap[i]);
