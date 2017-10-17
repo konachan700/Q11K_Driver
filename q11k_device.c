@@ -244,6 +244,8 @@ static void q11k_rkey_press(unsigned short key, int b_key_raw) {
 static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size) {
     int key_raw = 0, pressure, x_pos, y_pos;
     
+    if ((idev_keyboard == NULL) || (idev == NULL)) return -ENODEV;
+    
     //printk("q11k_raw_event %d -- %d -- Buf: %*phC", size, key_raw, size, data);
     //printk("hid_report %d -- %d -- Buf: %*phC", report->maxfield, (int) sizeof(struct hid_report), (int) sizeof(struct hid_report), report);
     
@@ -337,22 +339,46 @@ static int uclogic_resume(struct hid_device *hdev) {
 }
 #endif
 
-void q11k_remove(struct hid_device *dev) {
-    struct usb_interface *intf = to_usb_interface(dev->dev.parent);
-    if (intf->cur_altsetting->desc.bInterfaceNumber == 0) {
-                input_unregister_device(idev_keyboard);
+static void __close_keyboard(void) {
+    if (idev_keyboard != NULL) {
+        input_unregister_device(idev_keyboard);
         input_free_device(idev_keyboard);
         idev_keyboard = NULL;
         printk("Q11K keyboard unregistered");
-    } else if (intf->cur_altsetting->desc.bInterfaceNumber == 1) {
+    }
+}
+
+static void __close_pad(void) {
+    if (idev != NULL) {
         input_unregister_device(idev);
         input_free_device(idev);
         idev = NULL;
         printk("Q11K tab unregistered");
     }
+}
+
+void q11k_remove(struct hid_device *dev) {
+    struct usb_interface *intf = to_usb_interface(dev->dev.parent);
+    if (intf->cur_altsetting->desc.bInterfaceNumber == 0) {
+        __close_keyboard();
+    } else if (intf->cur_altsetting->desc.bInterfaceNumber == 1) {
+        __close_pad();
+    }
     hid_hw_close(dev);
     hid_hw_stop(dev);
 }
+
+/*static int q11k_module_init(void) {
+    return 0;
+}
+
+static void q11k_module_exit(void) {
+    __close_keyboard();
+    __close_pad();
+}*/
+
+//module_init(q11k_module_init);
+//module_exit(q11k_module_exit);
 
 struct wacom_features {
 	const char *name;
