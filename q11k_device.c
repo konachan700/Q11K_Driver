@@ -88,7 +88,7 @@ static __u8 q11k_rdesc_fixed0[] = {
 static unsigned short def_keymap[Q11K_KEYMAP_SIZE] = {
     KEY_0, KEY_1, KEY_2, KEY_3,  
     KEY_4, KEY_5, KEY_6, KEY_7,  
-    KEY_8, KEY_9, KEY_RIGHTCTRL
+    BTN_MIDDLE, BTN_RIGHT, KEY_RIGHTCTRL
 };
 
 struct input_dev 
@@ -179,10 +179,9 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id) {
             idev_keyboard->keycodemax  = Q11K_KEYMAP_SIZE;
             idev_keyboard->keycodesize = sizeof(def_keymap[0]);
             
-            set_bit(EV_REP, idev_keyboard->evbit);
-            set_bit(EV_KEY, idev_keyboard->evbit);
-            
             input_set_capability(idev_keyboard, EV_MSC, MSC_SCAN);
+            input_set_capability(idev_keyboard, EV_REL, MSC_SCAN);
+            input_set_capability(idev_keyboard, EV_REP, MSC_SCAN);
             
             for (i=0; i<Q11K_KEYMAP_SIZE; i++) {
                 input_set_capability(idev_keyboard, EV_KEY, def_keymap[i]);
@@ -263,17 +262,20 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
         
         if ((data[1] == 0xc2) || (data[1] == 0xc4)) {
             if (stylus_pressed == 0) {
-                if (data[1] == 0xc2) __q11k_rkey_press(KEY_8, data[4], 1);
-                if (data[1] == 0xc4) __q11k_rkey_press(KEY_9, data[4], 1);
+                if (data[1] == 0xc2) input_report_key(idev_keyboard, BTN_MIDDLE, 1);
+                if (data[1] == 0xc4) input_report_key(idev_keyboard, BTN_RIGHT, 1);
+                input_sync(idev_keyboard);
             }
             stylus_pressed = 1;
         } else {
             if (stylus_pressed == 1) {
-                __q11k_rkey_press(KEY_8, data[4], 0);
-                __q11k_rkey_press(KEY_9, data[4], 0);
+                input_report_key(idev_keyboard, BTN_MIDDLE, 0);
+                input_report_key(idev_keyboard, BTN_RIGHT, 0);
+                input_sync(idev_keyboard);
             }
             stylus_pressed = 0;
         }
+        
         
         
         if (data[1] == 0xc0) {
