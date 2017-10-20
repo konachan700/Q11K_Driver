@@ -351,7 +351,7 @@ static struct hid_driver q11k_driver = {
 };
 module_hid_driver(q11k_driver);
 
-MODULE_AUTHOR("Konata Izumi <konachan.700@gtmail.com>");
+MODULE_AUTHOR("Konata Izumi <konachan.700@gmail.com>");
 MODULE_DESCRIPTION("Huion Q11K device driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
