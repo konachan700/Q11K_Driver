@@ -216,8 +216,6 @@ static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8
                 case 0x80:
                     q11k_rkey_press(KEY_7, data[4]);
                     break;
-                default:
-                    printk("Unknown button code captured. Ignored.");
             }
             return 0;
         }
