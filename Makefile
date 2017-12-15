@@ -8,7 +8,4 @@ install: modules_install
 	install -D -m 0644 99-q11k_device.conf /etc/modprobe.d/99-q11k_device.conf
 	depmod -a
 uninstall:
-	rm -vf /lib/modules/*/extra/q11k_device.o
-	rm -vf /etc/modprobe.d/99-q11k_device.conf
-	depmod -a
- 
+	./uninstall.bash
