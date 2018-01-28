@@ -14,7 +14,10 @@
 #include <linux/version.h>
 #include <linux/hid.h>
 #include <linux/usb.h>
+#include <linux/jiffies.h>
 #include <asm/unaligned.h>
+#include <stdbool.h>
+
 
 #define	hid_to_usb_dev(hid_dev) container_of(hid_dev->dev.parent->parent, struct usb_device, dev)
 
@@ -25,6 +28,14 @@
 #define USB_DEVICE_ID_HUION_TABLET	    0x006e
 
 #define CONFIG_BUF_SIZE                 514
+
+#define MAX_ABS_X 50800
+#define MAX_ABS_Y 31750
+#define MAX_ABS_PRESSURE 8192
+
+#define REL_PEN_DIV 1
+#define REL_PEN_POS_RESET_SKIP_COUNT 1
+#define REL_PEN_UP_TICK 10
 
 #define DEBUG
 #define DPRINT(d, ...)       printk(d, ##__VA_ARGS__)
@@ -71,7 +82,21 @@
 #error "unknown stylus key type"
 #endif
 
-typedef unsigned short (*q11k_key_mapping_func_t)(u8 b_key_raw);
+typedef unsigned short (*q11k_key_mapping_func_t)(u8 b_key_raw, unsigned short** last_key_pp);
+
+typedef struct __tag_relative_pen_t
+{
+    bool enabled;
+    int last_x;
+    int last_y;
+
+    int origin_x;
+    int origin_y;
+
+    int reseting_count;
+
+    u64 last_jiffies;
+} relative_pen_t;
 
 static unsigned short def_keymap[] = {
     Q11K_KEY_TOP_LEFT,
@@ -110,16 +135,29 @@ static const int Q11k_KeyMapSize = sizeof(def_keymap) / sizeof(def_keymap[0]);
 struct input_dev* idev_pen = NULL;
 struct input_dev* idev_keyboard = NULL;
 
-static int stylus_pressed = 0;
-static int stylus2_pressed = 0;
+static bool stylus_pressed = false;
+static bool stylus2_pressed = false;
 
 static unsigned short last_key = 0;
 static unsigned short last_vkey = 0;
 
 
+static relative_pen_t rel_pen_data = {
+    false,  // enabled
+    -1, // last_x
+    -1, // last_y
+    0,  // origin_x
+    0,  // origin_y
+    0,  // reseting_count
+    0   // last_jiffies
+    };
+
+
 static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id);
 
+static int q11k_prepare_pens(struct hid_device *hdev);
 static int q11k_register_pen(struct hid_device *hdev);
+static int q11k_register_relative_pen(struct hid_device *hdev);
 static int q11k_register_keyboard(struct hid_device *hdev, struct usb_device *usb_dev);
 
 static int q11k_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size);
@@ -134,8 +172,8 @@ static void q11k_handle_key_mapping_event(
     int keyc,
     u8 b_key_raw,
     q11k_key_mapping_func_t kmp_func);
-static unsigned short q11k_mapping_keys(u8 b_key_raw);
-static unsigned short q11k_mapping_gesture_keys(u8 b_key_raw);
+static unsigned short q11k_mapping_keys(u8 b_key_raw, unsigned short** last_key_pp);
+static unsigned short q11k_mapping_gesture_keys(u8 b_key_raw, unsigned short** last_key_pp);
 
 static void q11k_report_keys(const int keyc, const unsigned short* keys, int s);
 static void __upress_pen(void);
@@ -143,10 +181,22 @@ static void __upress_pen(void);
 static void q11k_calculate_pen_data(const u8* data, int* x_pos, int* y_pos, int* pressure);
 static void q11k_calculate_mouse_data(const u8* data, int* x_pos, int* y_pos);
 
+static void q11k_relative_pen_toggle(void);
+static bool q11k_relative_pen_is_enabled(void);
+static void q11k_relative_pen_enable(void);
+static void q11k_relative_pen_disable(void);
+static void q11k_relative_pen_reset_origin(void);
+static void q11k_relative_pen_update_origin(int x, int y);
+static void q11k_relative_pen_check_and_try_reset_last_abs_pos(void);
+static void q11k_relative_pen_reset_last_abs_pos(void);
+static void q11k_relative_pen_limit_xy(int* xp, int* yp);
+static void q11k_relative_pen_update_last_abs_pos(int x, int y);
+static void q11k_relative_pen_get_rel_pos(int abs_x, int abs_y, int* rel_x, int* rel_y);
+
 static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
     int rc = 0;
-	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
+    struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
     unsigned long quirks = id->driver_data;
     int if_number = intf->cur_altsetting->desc.bInterfaceNumber;
@@ -189,6 +239,11 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id)
             rc = q11k_register_keyboard(hdev, usb_dev);
         }
 
+        if (rc == 0)
+        {
+            return rc;
+        }
+
         DPRINT("q11k device ok");
     }
     else
@@ -207,7 +262,7 @@ static int q11k_register_pen(struct hid_device *hdev)
     idev_pen = input_allocate_device();
     if (idev_pen == NULL)
     {
-        hid_err(hdev, "failed to allocate input device\n");
+        hid_err(hdev, "failed to allocate input device for pen\n");
         return -ENOMEM;
     }
 
@@ -220,11 +275,13 @@ static int q11k_register_pen(struct hid_device *hdev)
     idev_pen->dev.parent = &hdev->dev;
 
     set_bit(EV_REP, idev_pen->evbit);
-    set_bit(EV_KEY, idev_pen->evbit);
-    set_bit(EV_ABS, idev_pen->evbit);
-    set_bit(BTN_TOOL_PEN, idev_pen->keybit);
-    set_bit(BTN_STYLUS, idev_pen->keybit);
-    set_bit(BTN_STYLUS2, idev_pen->keybit);
+
+    input_set_capability(idev_pen, EV_ABS, ABS_X);
+	input_set_capability(idev_pen, EV_ABS, ABS_Y);
+    input_set_capability(idev_pen, EV_ABS, ABS_PRESSURE);
+    input_set_capability(idev_pen, EV_KEY, BTN_TOOL_PEN);
+    input_set_capability(idev_pen, EV_KEY, BTN_STYLUS);
+    input_set_capability(idev_pen, EV_KEY, BTN_STYLUS2);
 
     input_set_abs_params(idev_pen, ABS_X, 1, 50800, 0, 0);  // 55662
     input_set_abs_params(idev_pen, ABS_Y, 1, 31750, 0, 0);  // 34789
@@ -233,12 +290,13 @@ static int q11k_register_pen(struct hid_device *hdev)
     rc = input_register_device(idev_pen);
     if (rc)
     {
-        hid_err(hdev, "error registering the input device\n");
+        hid_err(hdev, "error registering the input device for pen\n");
         input_free_device(idev_pen);
         return rc;
     }
     return 0;
 }
+
 static int q11k_register_keyboard(struct hid_device *hdev, struct usb_device *usb_dev)
 {
     int rc = 0;
@@ -365,6 +423,9 @@ static void q11k_handle_mouse_event(int x_pos, int y_pos)
 
 static void q11k_handle_pen_event(u8 b_key_raw, int x_pos, int y_pos, int pressure)
 {
+    int rpt_x = x_pos;
+    int rpt_y = y_pos;
+
     switch (b_key_raw)
     {
         case 0x80:
@@ -374,7 +435,6 @@ static void q11k_handle_pen_event(u8 b_key_raw, int x_pos, int y_pos, int pressu
             break;
         case 0x81:
         {
-            // __upress_pen();
             input_report_key(idev_pen, BTN_TOOL_PEN, 1);
             input_report_abs(idev_pen, ABS_PRESSURE, pressure);
             break;
@@ -383,22 +443,38 @@ static void q11k_handle_pen_event(u8 b_key_raw, int x_pos, int y_pos, int pressu
         {
             input_report_key(Q11K_STYLUS_KEY_DEVICE, Q11K_STYLUS_KEY_1, 1);
             Q11K_STYLUS_KEY_SYNC();
-            stylus_pressed = 1;
+            stylus_pressed = true;
             break;
         }
         case 0x84:
         {
             input_report_key(Q11K_STYLUS_KEY_DEVICE, Q11K_STYLUS_KEY_2, 1);
             Q11K_STYLUS_KEY_SYNC();
-            stylus2_pressed = 1;
+            stylus2_pressed = true;
             break;
         }
     }
 
-    DPRINT_DEEP("sensors: x=%08d y=%08d pressure=%08d", x_pos, y_pos, pressure);
+    if(q11k_relative_pen_is_enabled())
+    {
+        int rel_x = 0;
+        int rel_y = 0;
+        q11k_relative_pen_check_and_try_reset_last_abs_pos();
+        q11k_relative_pen_get_rel_pos(x_pos, y_pos, &rel_x, &rel_y);
 
-    input_report_abs(idev_pen, ABS_X, x_pos);
-    input_report_abs(idev_pen, ABS_Y, y_pos);
+        rpt_x = rel_x + rel_pen_data.origin_x;
+        rpt_y = rel_y + rel_pen_data.origin_y;
+
+        q11k_relative_pen_limit_xy(&rpt_x, &rpt_y);
+        q11k_relative_pen_update_origin(rpt_x, rpt_y);
+
+        q11k_relative_pen_update_last_abs_pos(x_pos, y_pos);
+    }
+
+    DPRINT_DEEP("sensors: x=%08d y=%08d pressure=%08d", rpt_x, rpt_y, pressure);
+
+    input_report_abs(idev_pen, ABS_X, rpt_x);
+    input_report_abs(idev_pen, ABS_Y, rpt_y);
     input_sync(idev_pen);
 }
 
@@ -410,35 +486,54 @@ static void q11k_handle_key_mapping_event(
 {
     unsigned short* rkey_p = keys + keyc - 1;
     int value = 1;
-    unsigned short new_key = kmp_func(b_key_raw);
+    unsigned short* last_key_p = NULL;
+    unsigned short new_key = kmp_func(b_key_raw, &last_key_p);
 
     if (new_key == 0)
     {
         value = 0;
-        new_key = last_key;
+        new_key = *last_key_p;
     }
 
-    if (last_key != 0 && last_key != new_key && value != 0)
+    if (last_key_p == &last_vkey && new_key == Q11K_VKEY_4_MOVE)
     {
-        *rkey_p = last_key;
-        q11k_report_keys(keyc, keys, 0);
+        if (value != 0)
+        {
+            q11k_relative_pen_toggle();
+            *last_key_p = new_key;
+        }
+        else
+        {
+            *last_key_p = 0;
+        }
     }
-
-    if (new_key != KEY_UNKNOWN && new_key != 0)
+    else
     {
-        *rkey_p = new_key;
-        last_key = new_key;
-        q11k_report_keys(keyc, keys, value);
-    }
+        int t_last_key = *last_key_p;
+        if (t_last_key != 0 && t_last_key != new_key && value != 0)
+        {
+            *rkey_p = t_last_key;
+            q11k_report_keys(keyc, keys, 0);
+        }
 
-    if (value == 0)
-    {
-        last_key = 0;
+        if (new_key != KEY_UNKNOWN && new_key != 0)
+        {
+            *rkey_p = new_key;
+            *last_key_p = new_key;
+            q11k_report_keys(keyc, keys, value);
+        }
+
+        if (value == 0)
+        {
+            *last_key_p = 0;
+        }
     }
 }
 
-static unsigned short q11k_mapping_keys(u8 b_key_raw)
+static unsigned short q11k_mapping_keys(u8 b_key_raw, unsigned short** last_key_pp)
 {
+    *last_key_pp = &last_key;
+
     switch (b_key_raw)
     {
         case 0x00:
@@ -484,15 +579,17 @@ static unsigned short q11k_mapping_keys(u8 b_key_raw)
     }
 }
 
-static unsigned short q11k_mapping_gesture_keys(u8 b_key_raw)
+static unsigned short q11k_mapping_gesture_keys(u8 b_key_raw, unsigned short** last_key_pp)
 {
+    *last_key_pp = &last_vkey;
+
     switch (b_key_raw)
     {
         case 0x00:
         {
             if (last_vkey > 0)
             {
-                return last_vkey;
+                return 0;
             }
             else
             {
@@ -562,19 +659,19 @@ static void q11k_report_keys(const int keyc, const unsigned short* keys, int s)
 
 static void __upress_pen(void)
 {
-    int stylus_changed = 0;
+    bool stylus_changed = false;
 
-    if (stylus_pressed == 1)
+    if (stylus_pressed)
     {
         input_report_key(Q11K_STYLUS_KEY_DEVICE, Q11K_STYLUS_KEY_1, 0);
-        stylus_pressed = 0;
+        stylus_pressed = false;
         stylus_changed = true;
     }
 
-    if (stylus2_pressed == 1)
+    if (stylus2_pressed)
     {
         input_report_key(Q11K_STYLUS_KEY_DEVICE, Q11K_STYLUS_KEY_2, 0);
-        stylus2_pressed = 0;
+        stylus2_pressed = false;
         stylus_changed = true;
     }
 
@@ -595,6 +692,128 @@ static void q11k_calculate_mouse_data(const u8* data, int* x_pos, int* y_pos)
 {
     *x_pos           = data[3] * 0xFF + data[2];
     *y_pos           = data[5] * 0xFF + data[4];
+}
+
+static void q11k_relative_pen_toggle(void)
+{
+    if (!q11k_relative_pen_is_enabled())
+    {
+        q11k_relative_pen_enable();
+    }
+    else
+    {
+        q11k_relative_pen_disable();
+    }
+}
+
+static bool q11k_relative_pen_is_enabled(void)
+{
+    return rel_pen_data.enabled;
+}
+
+static void q11k_relative_pen_enable(void)
+{
+    q11k_relative_pen_reset_origin();
+    q11k_relative_pen_reset_last_abs_pos();
+
+    rel_pen_data.enabled = true;
+}
+
+static void q11k_relative_pen_disable(void)
+{
+    rel_pen_data.enabled = false;
+}
+
+static void q11k_relative_pen_reset_origin(void)
+{
+    int cur_x = input_abs_get_val(idev_pen, ABS_X);
+    int cur_y = input_abs_get_val(idev_pen, ABS_Y);
+
+    q11k_relative_pen_update_origin(cur_x, cur_y);
+}
+
+static void q11k_relative_pen_update_origin(int x, int y)
+{
+    rel_pen_data.origin_x = x;
+    rel_pen_data.origin_y = y;
+}
+
+static void q11k_relative_pen_limit_xy(int* xp, int* yp)
+{
+    int x = *xp;
+    int y = *yp;
+
+    if (x > MAX_ABS_X)
+    {
+        x = MAX_ABS_X;
+        *xp = x;
+    }
+    else if (x < 0)
+    {
+        x = 0;
+        *xp = x;
+    }
+
+    if (y > MAX_ABS_X)
+    {
+        y = MAX_ABS_Y;
+        *yp = y;
+    }
+    else if (y < 0)
+    {
+        y = 0;
+        *yp = y;
+    }
+}
+
+static void q11k_relative_pen_check_and_try_reset_last_abs_pos(void)
+{
+    u64 cur_jiffies = get_jiffies_64();
+    u64 dj = cur_jiffies - rel_pen_data.last_jiffies;
+
+    if (dj > REL_PEN_UP_TICK)
+    {
+        q11k_relative_pen_reset_last_abs_pos();
+    }
+}
+
+static void q11k_relative_pen_reset_last_abs_pos(void)
+{
+    rel_pen_data.last_x = -1;
+    rel_pen_data.last_y = -1;
+    rel_pen_data.reseting_count = REL_PEN_POS_RESET_SKIP_COUNT + 1;
+}
+
+static void q11k_relative_pen_update_last_abs_pos(int x, int y)
+{
+    if (rel_pen_data.reseting_count > 0)
+    {
+        --rel_pen_data.reseting_count;
+    }
+
+    rel_pen_data.last_x = x;
+    rel_pen_data.last_y = y;
+    rel_pen_data.last_jiffies = get_jiffies_64();
+}
+
+static void q11k_relative_pen_get_rel_pos(int abs_x, int abs_y, int* rel_x, int* rel_y)
+{
+    int dx = 0;
+    int dy = 0;
+
+    if (rel_pen_data.reseting_count > 0)
+    {
+        dx = 0;
+        dy = 0;
+    }
+    else
+    {
+        dx = abs_x - rel_pen_data.last_x;
+        dy = abs_y - rel_pen_data.last_y;
+    }
+
+    *rel_x = dx / REL_PEN_DIV;
+    *rel_y = dy / REL_PEN_DIV;
 }
 
 #ifdef CONFIG_PM
