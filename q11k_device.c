@@ -202,7 +202,9 @@ static int q11k_probe(struct hid_device *hdev, const struct hid_device_id *id)
     int if_number = intf->cur_altsetting->desc.bInterfaceNumber;
 
     hdev->quirks |= HID_QUIRK_MULTI_INPUT;
-	hdev->quirks |= HID_QUIRK_NO_EMPTY_INPUT;
+	#ifdef HID_QUIRK_NO_EMPTY_INPUT
+            hdev->quirks |= HID_QUIRK_NO_EMPTY_INPUT;
+        #endif
 
     if (id->product == USB_DEVICE_ID_HUION_TABLET) {
         DPRINT("q11k device detected if=%d", if_number);
